@@ -1,0 +1,20 @@
+{
+  "id": "aryanb170205/dl-24f1001839-notebook-t22026",
+  "id_no": 126602606,
+  "title": "DL-24f1001839-notebook-t22026",
+  "code_file": "dl-24f1001839-notebook-t22026.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": [],
+  "dataset_sources": [],
+  "kernel_sources": [],
+  "competition_sources": [
+    "smart-mcq-solver-challenge"
+  ],
+  "model_sources": [],
+  "accelerator": "nvidiaTeslaT4x2"
+}
