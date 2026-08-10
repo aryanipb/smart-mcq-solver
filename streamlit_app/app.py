@@ -42,18 +42,26 @@ st.write(
 
 tok, model, device = load_model()
 
+st.info(
+    "💡 The pre-filled example below is a real training-set question, where the model "
+    "predicts with high confidence — matching the report's 'recall regime' finding. Try "
+    "rephrasing the question or swapping the options to see it become far less certain; "
+    "that gap is the central result of this project (see Section 3.2 / Figure 5 of the report).",
+    icon="💡",
+)
+
 with st.form("mcq_form"):
     question = st.text_area(
         "Question",
-        "What is the Heisenberg uncertainty principle?",
+        "What is accelerator-based light-ion fusion?",
         height=80,
     )
     defaults = [
-        "It states that position and momentum of a particle cannot both be known exactly at the same time.",
-        "It states that energy is always conserved in a closed system.",
-        "It states that entropy always increases in an isolated system.",
-        "It states that mass and energy are equivalent.",
-        "It states that all matter exhibits both particle and wave properties.",
+        "Accelerator-based light-ion fusion is a technique that uses particle accelerators to achieve particle kinetic energies sufficient to induce light-ion fusion reactions. This method is relatively easy to implement and can be done in an efficient manner, requiring only a vacuum tube, a pair of electrodes, and a high-voltage transformer. Fusion can be observed with as little as 10 kV between the electrodes.",
+        "Accelerator-based light-ion fusion is a technique that uses particle accelerators to achieve particle kinetic energies sufficient to induce heavy-ion fusion reactions. This method is relatively difficult to implement and requires a complex system of vacuum tubes, electrodes, and transformers. Fusion can be observed with as little as 10 kV between the electrodes.",
+        "Accelerator-based light-ion fusion is a technique that uses particle accelerators to achieve particle kinetic energies sufficient to induce light-ion fusion reactions. This method is relatively difficult to implement and requires a complex system of vacuum tubes, electrodes, and transformers. Fusion can be observed with as little as 100 kV between the electrodes.",
+        "Accelerator-based light-ion fusion is a technique that uses particle accelerators to achieve particle kinetic energies sufficient to induce heavy-ion fusion reactions. This method is relatively easy to implement and can be done in an efficient manner, requiring only a vacuum tube, a pair of electrodes, and a high-voltage transformer. Fusion can be observed with as little as 100 kV between the electrodes.",
+        "Accelerator-based light-ion fusion is a technique that uses particle accelerators to achieve particle kinetic energies sufficient to induce light-ion fission reactions. This method is relatively easy to implement and can be done in an efficient manner, requiring only a vacuum tube, a pair of electrodes, and a high-voltage transformer. Fission can be observed with as little as 10 kV between the electrodes.",
     ]
     options = [
         st.text_input(f"Option {LETTERS[i]}", defaults[i]) for i in range(5)
