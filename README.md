@@ -2,17 +2,33 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![Kaggle Rank](https://img.shields.io/badge/Kaggle%20Rank-17%20%2F%201531%20(Top%201.1%25)-ffd700?logo=kaggle&logoColor=black)](#-official-competition-standing--proof)
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model%20Hub-FFD21E)](https://huggingface.co/aryanbabar170205/smart-mcq-roberta-base)
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://smart-mcq-solver.streamlit.app)
-[![Kaggle](https://img.shields.io/badge/Kaggle-Competition%20Cutoff%20Passed-20BEFF?logo=kaggle&logoColor=white)](https://www.kaggle.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-> **Course**: Deep Learning & Generative AI ([BSDA2001P])  
-> **Benchmark**: Smart MCQ Solver Challenge  
-> **Evaluation Metric**: Mean Average Precision at 3 (MAP@3)  
-> **Final Submission Score**: **MAP@3 > 0.73** (Competition cutoff crossed)  
+> **Competition**: Smart MCQ Solver Challenge (Kaggle)  
+> **Official Standing**: **Rank 17 / 1,531 Participants (Top 1.1%)** 🏆  
+> **Final Private Score**: **0.77272 MAP@3** (Shakeup: **▲ +487 positions**)  
 > **Live Demo**: [Streamlit Web App](https://smart-mcq-solver.streamlit.app)  
 > **Published Model**: [`aryanbabar170205/smart-mcq-roberta-base`](https://huggingface.co/aryanbabar170205/smart-mcq-roberta-base)  
+
+---
+
+## 🏆 Official Competition Standing & Proof
+
+On the official private leaderboard evaluated on unseen test data across **1,531 participants**, the final ensemble of multiple-choice cross-encoders achieved **Rank 17**:
+
+<p align="center">
+  <img src="figures/kaggle_leaderboard_proof.png" alt="Official Kaggle Leaderboard - Rank 17 of 1531" width="900"/>
+</p>
+
+| Metric | Official Result | Context |
+|---|---:|---|
+| **Private Leaderboard Rank** | **#17 / 1,531** | **Top 1.1% nationwide** |
+| **Private Score (MAP@3)** | **0.77272** | Rank 1 scored 0.78282 (delta: **0.0101**) |
+| **Private Shakeup Delta** | **▲ +487** | Major jump on private split proving zero overfitting |
+| **Competition Threshold** | **0.73000** | Exceeded cutoff by **+0.0427** |
 
 ---
 
@@ -20,7 +36,7 @@
 
 **Smart MCQ Solver** is an end-to-end deep learning system built to solve complex scientific and technical 5-option multiple-choice questions (MCQs) and rank the **top-3** most probable answers.
 
-Rather than treating the challenge as a naive sequence classification task, this project reformulates the objective using an **`AutoModelForMultipleChoice` cross-encoder architecture**, pairing each `(question, option)` tuple through a shared encoder. Combined with **group-aware deduplication** to eliminate severe validation data leakage and a **probability-weighted ensemble** of DeBERTa-v3 and RoBERTa, the final system exceeds the competitive threshold with **MAP@3 > 0.73**.
+Rather than treating the challenge as a naive sequence classification task, this project reformulates the objective using an **`AutoModelForMultipleChoice` cross-encoder architecture**, pairing each `(question, option)` tuple through a shared encoder. Combined with **group-aware deduplication** to eliminate severe validation data leakage and a **probability-weighted ensemble** of DeBERTa-v3 and RoBERTa, the final system achieved **Rank 17 of 1,531 (0.77272 MAP@3)** on Kaggle.
 
 ---
 
