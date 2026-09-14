@@ -1,0 +1,808 @@
+import subprocess, sys, os
+
+gpu_raw = subprocess.run(['nvidia-smi', '--query-gpu=name,compute_cap', '--format=csv,noheader'],
+                         capture_output=True, text=True).stdout.strip()
+print(f'GPU: {gpu_raw}')
+gpu_name = gpu_raw.split(',')[0].strip() if gpu_raw else ''
+
+if 'P100' in gpu_name:
+    print('P100 detected. Installing compatible PyTorch...')
+    subprocess.run([sys.executable, '-m', 'pip', 'uninstall', '-y', 'torch', 'torchvision', 'torchaudio'],
+                   capture_output=True)
+    r = subprocess.run([sys.executable, '-m', 'pip', 'install',
+                        'torch==2.5.0+cu121', 'torchvision==0.20.0+cu121',
+                        'torchaudio==2.5.0+cu121', 'transformers==4.46.1',
+                        '--index-url', 'https://download.pytorch.org/whl/cu121'],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f'FAILED: {r.stderr[:300]}')
+        raise SystemExit(1)
+
+import torch
+print(f'PyTorch {torch.__version__} | CUDA: {torch.cuda.is_available()}')
+
+import transformers.utils.import_utils as _tui
+if hasattr(_tui, 'check_torch_load_is_safe'):
+    _tui.check_torch_load_is_safe = lambda: None
+
+subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', 'hf_transfer'], capture_output=True)
+os.environ['HF_HUB_ENABLE_HF_TRANSFER'] = '1'
+
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+print('Downloading model weights...')
+for mn in ['microsoft/deberta-v3-small', 'roberta-base', 'albert-base-v2']:
+    print(f'  {mn}...', end='', flush=True)
+    AutoTokenizer.from_pretrained(mn)
+    AutoModelForSequenceClassification.from_pretrained(mn, num_labels=5, ignore_mismatched_sizes=True)
+    print(' done')
+print('All models cached.')
+GPU: Tesla T4, 7.5
+Tesla T4, 7.5
+PyTorch 2.10.0+cu128 | CUDA: True
+Downloading model weights...
+  microsoft/deberta-v3-small...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+DebertaV2ForSequenceClassification LOAD REPORT from: microsoft/deberta-v3-small
+Key                                     | Status     |
+----------------------------------------+------------+-
+mask_predictions.classifier.weight      | UNEXPECTED |
+lm_predictions.lm_head.LayerNorm.bias   | UNEXPECTED |
+lm_predictions.lm_head.dense.weight     | UNEXPECTED |
+mask_predictions.LayerNorm.weight       | UNEXPECTED |
+lm_predictions.lm_head.dense.bias       | UNEXPECTED |
+mask_predictions.dense.weight           | UNEXPECTED |
+lm_predictions.lm_head.LayerNorm.weight | UNEXPECTED |
+mask_predictions.classifier.bias        | UNEXPECTED |
+mask_predictions.LayerNorm.bias         | UNEXPECTED |
+mask_predictions.dense.bias             | UNEXPECTED |
+lm_predictions.lm_head.bias             | UNEXPECTED |
+classifier.weight                       | MISSING    |
+classifier.bias                         | MISSING    |
+pooler.dense.weight                     | MISSING    |
+pooler.dense.bias                       | MISSING    |
+
+Notes:
+- UNEXPECTED	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+- MISSING	:those params were newly initialized because missing from the checkpoint. Consider training on your downstream task.
+ done
+  roberta-base...
+RobertaForSequenceClassification LOAD REPORT from: roberta-base
+Key                             | Status     |
+--------------------------------+------------+-
+lm_head.dense.weight            | UNEXPECTED |
+roberta.embeddings.position_ids | UNEXPECTED |
+lm_head.layer_norm.weight       | UNEXPECTED |
+lm_head.layer_norm.bias         | UNEXPECTED |
+lm_head.bias                    | UNEXPECTED |
+lm_head.dense.bias              | UNEXPECTED |
+classifier.dense.weight         | MISSING    |
+classifier.out_proj.weight      | MISSING    |
+classifier.out_proj.bias        | MISSING    |
+classifier.dense.bias           | MISSING    |
+
+Notes:
+- UNEXPECTED	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+- MISSING	:those params were newly initialized because missing from the checkpoint. Consider training on your downstream task.
+ done
+  albert-base-v2...
+AlbertForSequenceClassification LOAD REPORT from: albert-base-v2
+Key                          | Status     |
+-----------------------------+------------+-
+predictions.LayerNorm.bias   | UNEXPECTED |
+predictions.dense.bias       | UNEXPECTED |
+predictions.LayerNorm.weight | UNEXPECTED |
+predictions.dense.weight     | UNEXPECTED |
+predictions.decoder.bias     | UNEXPECTED |
+predictions.bias             | UNEXPECTED |
+classifier.weight            | MISSING    |
+classifier.bias              | MISSING    |
+
+Notes:
+- UNEXPECTED	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+- MISSING	:those params were newly initialized because missing from the checkpoint. Consider training on your downstream task.
+ done
+All models cached.
+Smart MCQ Solver — DL-24f1001839-notebook-t22026
+4 Models + WandB Tracking + Smart Ensemble | Target MAP@3 ≥ 0.75
+
+#	Model	Format	Best val seen
+1	Scratch Transformer	[SEP]	0.63 (low ensemble weight)
+2	DeBERTa-v3-small	[SEP] + m2.float()	0.5971 (v87)
+3	RoBERTa-base	[SEP] + m3.float()	0.5419
+4	ALBERT-base-v2	Question:\n format	0.6188 (v81)
+import os, gc, glob, warnings
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+warnings.filterwarnings('ignore')
+
+from transformers import (
+    AutoTokenizer, AutoModelForSequenceClassification,
+    Trainer, TrainingArguments, get_linear_schedule_with_warmup,
+)
+from datasets import Dataset
+import wandb
+
+import transformers.utils.import_utils as _tui
+if hasattr(_tui, 'check_torch_load_is_safe'):
+    _tui.check_torch_load_is_safe = lambda: None
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f'PyTorch: {torch.__version__}')
+print(f'Device : {device}')
+cuda_avail = torch.cuda.is_available()
+use_fp16   = False
+if cuda_avail:
+    cap = torch.cuda.get_device_capability()
+    print(f'GPU    : {torch.cuda.get_device_name(0)} (sm_{cap[0]}{cap[1]})')
+    print(f'VRAM   : {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
+    use_fp16 = cap[0] >= 7
+print(f'Using fp16: {use_fp16}')
+
+WANDB_PROJECT = '24f1001839-t22026'
+wandb_key = os.environ.get('WANDB_API_KEY', '')
+if wandb_key:
+    wandb.login(key=wandb_key)
+    WANDB_REPORT = 'wandb'
+else:
+    os.environ['WANDB_MODE'] = 'offline'
+    WANDB_REPORT = 'none'
+    print('WandB: OFFLINE mode')
+PyTorch: 2.10.0+cu128
+Device : cuda
+GPU    : Tesla T4 (sm_75)
+VRAM   : 15.6 GB
+Using fp16: True
+WandB: OFFLINE mode
+def find_csv(name):
+    candidates = [
+        f'/kaggle/input/competitions/smart-mcq-solver-challenge/{name}',
+        f'/kaggle/input/smart-mcq-solver-challenge/{name}',
+        f'/kaggle/input/{name}',
+    ] + glob.glob(f'/kaggle/input/**/{name}', recursive=True)
+    for p in candidates:
+        if os.path.isfile(p):
+            print(f'  Found {name} -> {p}')
+            return p
+    for root, dirs, files in os.walk('/kaggle/input'):
+        for f in files:
+            print(os.path.join(root, f))
+    raise FileNotFoundError(f'{name} not found')
+
+print('Locating data...')
+TRAIN_CSV = find_csv('train.csv')
+TEST_CSV  = find_csv('test.csv')
+
+train = pd.read_csv(TRAIN_CSV)
+test  = pd.read_csv(TEST_CSV)
+
+lm = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}
+cl = ['A', 'B', 'C', 'D', 'E']
+train['label'] = train['answer'].map(lm)
+print(f'Train: {len(train)} | Test: {len(test)}')
+
+# ── GROUP-AWARE SPLIT ─────────────────────────────────────────────────────────
+train['q_key'] = (train['A'].astype(str) + '|||' + train['B'].astype(str) + '|||' +
+                  train['C'].astype(str) + '|||' + train['D'].astype(str) + '|||' +
+                  train['E'].astype(str))
+unique_keys = train['q_key'].unique()
+print(f'Unique Q: {len(unique_keys)} ({len(train)/len(unique_keys):.1f}x duplicates)')
+
+np.random.seed(42)
+shuffled = np.random.permutation(unique_keys)
+n_val_q  = max(50, int(len(unique_keys) * 0.15))
+val_keys_set   = set(shuffled[-n_val_q:])
+train_keys_set = set(shuffled[:-n_val_q])
+
+train_df   = train[train['q_key'].isin(train_keys_set)].reset_index(drop=True)
+val_df     = train[train['q_key'].isin(val_keys_set)].reset_index(drop=True)
+train_lbls = train_df['label'].tolist()
+val_lbls   = val_df['label'].tolist()
+
+assert len(set(train_df['q_key']) & set(val_df['q_key'])) == 0, 'LEAKAGE!'
+print(f'Train: {len(train_df)} | Val: {len(val_df)} | No leakage.')
+
+# ── Text formats — curated per model ─────────────────────────────────────────
+# Format A: [SEP] — for Scratch, DeBERTa, RoBERTa (proven best in 6203/v87)
+def fmt_sep(p, a, b, c, d, e):
+    return f'{p} [SEP] A: {a} B: {b} C: {c} D: {d} E: {e}'
+
+# Format B: Question:\nA:\n... — for ALBERT (SentencePiece tokenizer, proven val=0.6188 in v81)
+def fmt_albert(p, a, b, c, d, e):
+    return f'Question: {p}\nA: {a}\nB: {b}\nC: {c}\nD: {d}\nE: {e}'
+
+def make_texts(df, fn):
+    return [fn(str(r['prompt']),str(r['A']),str(r['B']),
+               str(r['C']),str(r['D']),str(r['E'])) for _,r in df.iterrows()]
+
+# [SEP] texts for scratch/DeBERTa/RoBERTa
+train_txts_sep = make_texts(train_df, fmt_sep)
+val_txts_sep   = make_texts(val_df, fmt_sep)
+test_txts_sep  = make_texts(test, fmt_sep)
+
+# Natural texts for ALBERT
+train_txts_alb = make_texts(train_df, fmt_albert)
+val_txts_alb   = make_texts(val_df, fmt_albert)
+test_txts_alb  = make_texts(test, fmt_albert)
+
+# ── Metric helpers ────────────────────────────────────────────────────────────
+def map_at_3(probs_list, labels):
+    score = 0.0
+    for p, lbl in zip(probs_list, labels):
+        for k, idx in enumerate(np.argsort(p)[::-1][:3]):
+            if idx == lbl:
+                score += 1.0 / (k + 1)
+                break
+    return score / len(labels)
+
+def top3_str(p):
+    return ' '.join([cl[i] for i in np.argsort(p)[::-1][:3]])
+
+def get_probs_batched(model, tok, texts, batch_size=64, aug_prefix=None):
+    if aug_prefix:
+        texts = [aug_prefix + t for t in texts]
+    enc = tok(texts, padding='max_length', truncation=True,
+               max_length=128, return_tensors='pt')
+    all_probs = []
+    model.eval()
+    with torch.no_grad():
+        for i in range(0, len(texts), batch_size):
+            ii = enc['input_ids'][i:i+batch_size].to(device)
+            am = enc['attention_mask'][i:i+batch_size].to(device)
+            logits = model(input_ids=ii, attention_mask=am).logits
+            all_probs.append(torch.softmax(logits, -1).cpu().numpy())
+    return np.concatenate(all_probs)
+
+print('Data ready.')
+Locating data...
+  Found train.csv -> /kaggle/input/competitions/smart-mcq-solver-challenge/train.csv
+  Found test.csv -> /kaggle/input/competitions/smart-mcq-solver-challenge/test.csv
+Train: 2000 | Test: 500
+Unique Q: 588 (3.4x duplicates)
+Train: 1662 | Val: 338 | No leakage.
+Data ready.
+Model 1 — From-Scratch Transformer
+3-layer, 256-dim. EXACT 6203 config. Final-epoch weights (not best). Low ensemble weight.
+
+class ScratchTransformer(nn.Module):
+    def __init__(self, vocab_size=50265, embed_dim=256, num_heads=4,
+                 ff_dim=512, num_layers=3, max_len=128, num_labels=5, dropout=0.1):
+        super().__init__()
+        self.embed     = nn.Embedding(vocab_size, embed_dim, padding_idx=1)
+        self.pos_embed = nn.Parameter(torch.randn(1, max_len, embed_dim) * 0.02)
+        self.drop      = nn.Dropout(dropout)
+        enc_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim, nhead=num_heads, dim_feedforward=ff_dim,
+            dropout=dropout, batch_first=True, activation='gelu', norm_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
+        self.norm    = nn.LayerNorm(embed_dim)
+        self.head    = nn.Sequential(nn.Dropout(dropout), nn.Linear(embed_dim, num_labels))
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, std=0.02)
+                if m.bias is not None: nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Embedding):
+                nn.init.trunc_normal_(m.weight, std=0.02)
+
+    def forward(self, input_ids, attention_mask=None, labels=None):
+        x = self.embed(input_ids) + self.pos_embed[:, :input_ids.size(1), :]
+        x = self.drop(x)
+        pad_mask = (attention_mask == 0) if attention_mask is not None else None
+        x = self.encoder(x, src_key_padding_mask=pad_mask)
+        x = self.norm(x)
+        msk = attention_mask.unsqueeze(-1).float() if attention_mask is not None \
+              else torch.ones_like(x[:, :, :1])
+        x   = (x * msk).sum(1) / msk.sum(1).clamp(min=1)
+        logits = self.head(x)
+        loss   = F.cross_entropy(logits, labels) if labels is not None else None
+        return type('Out', (), {'loss': loss, 'logits': logits})()
+
+print('=== Training Model 1: From-Scratch Transformer ===')
+tok_m1     = AutoTokenizer.from_pretrained('roberta-base')
+m1_enc     = tok_m1(train_txts_sep, padding='max_length', truncation=True, max_length=128, return_tensors='pt')
+m1_val_enc = tok_m1(val_txts_sep,   padding='max_length', truncation=True, max_length=128, return_tensors='pt')
+m1_tst_enc = tok_m1(test_txts_sep,  padding='max_length', truncation=True, max_length=128, return_tensors='pt')
+
+m1 = ScratchTransformer(vocab_size=50265, embed_dim=256, num_heads=4,
+                         ff_dim=512, num_layers=3, max_len=128).to(device)
+print(f'Parameters: {sum(p.numel() for p in m1.parameters()):,}')
+
+N_EPOCHS_M1 = 25
+BS_M1       = 64
+n_steps_m1  = ((len(train_txts_sep) + BS_M1 - 1) // BS_M1) * N_EPOCHS_M1
+opt_m1      = torch.optim.AdamW(m1.parameters(), lr=5e-4, weight_decay=0.01)
+sched_m1    = get_linear_schedule_with_warmup(
+    opt_m1, num_warmup_steps=n_steps_m1 // 10, num_training_steps=n_steps_m1
+)
+
+wandb.init(project=WANDB_PROJECT, name='scratch-transformer-3layer',
+           tags=['scratch'], config={
+               'model': 'scratch', 'embed_dim': 256, 'num_layers': 3,
+               'epochs': N_EPOCHS_M1, 'batch_size': BS_M1, 'lr': 5e-4,
+           })
+
+best_val_m1 = 0.0
+for epoch in range(N_EPOCHS_M1):
+    m1.train()
+    perm = torch.randperm(len(train_txts_sep))
+    tot_loss, nb = 0.0, 0
+    for i in range(0, len(train_txts_sep), BS_M1):
+        idx = perm[i:i+BS_M1]
+        ii  = m1_enc['input_ids'][idx].to(device)
+        am  = m1_enc['attention_mask'][idx].to(device)
+        ll  = torch.tensor([train_lbls[j] for j in idx]).to(device)
+        out = m1(input_ids=ii, attention_mask=am, labels=ll)
+        out.loss.backward()
+        torch.nn.utils.clip_grad_norm_(m1.parameters(), 1.0)
+        opt_m1.step(); sched_m1.step(); opt_m1.zero_grad()
+        tot_loss += out.loss.item(); nb += 1
+
+    m1.eval()
+    vp = []
+    with torch.no_grad():
+        for i in range(0, len(val_txts_sep), 256):
+            ii = m1_val_enc['input_ids'][i:i+256].to(device)
+            am = m1_val_enc['attention_mask'][i:i+256].to(device)
+            out = m1(input_ids=ii, attention_mask=am)
+            vp.append(torch.softmax(out.logits, -1).cpu().numpy())
+    vp  = np.concatenate(vp)
+    vm1 = map_at_3(vp, val_lbls)
+    if vm1 > best_val_m1: best_val_m1 = vm1
+    avg_loss = tot_loss / nb
+    print(f'  Epoch {epoch+1:2d}/{N_EPOCHS_M1} | loss={avg_loss:.4f} | val_MAP@3={vm1:.4f}')
+    wandb.log({'m1_train_loss': avg_loss, 'm1_val_map3': vm1, 'epoch': epoch + 1})
+
+wandb.finish()
+print(f'Model 1 best val MAP@3: {best_val_m1:.4f}')
+
+m1.eval()
+with torch.no_grad():
+    val_probs_m1 = np.concatenate([
+        torch.softmax(m1(
+            input_ids=m1_val_enc['input_ids'][i:i+256].to(device),
+            attention_mask=m1_val_enc['attention_mask'][i:i+256].to(device)).logits,
+            -1).cpu().numpy()
+        for i in range(0, len(val_txts_sep), 256)
+    ])
+    test_probs_m1 = np.concatenate([
+        torch.softmax(m1(
+            input_ids=m1_tst_enc['input_ids'][i:i+256].to(device),
+            attention_mask=m1_tst_enc['attention_mask'][i:i+256].to(device)).logits,
+            -1).cpu().numpy()
+        for i in range(0, len(test_txts_sep), 256)
+    ])
+print(f'M1 final val MAP@3: {map_at_3(val_probs_m1, val_lbls):.4f}')
+del m1_enc, m1_val_enc, m1_tst_enc
+gc.collect(); torch.cuda.empty_cache() if torch.cuda.is_available() else None
+=== Training Model 1: From-Scratch Transformer ===
+Parameters: 14,483,717
+wandb: Tracking run with wandb version 0.26.1
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /kaggle/working/wandb/offline-run-20260727_101540-vt4zw465
+  Epoch  1/25 | loss=1.2748 | val_MAP@3=0.5750
+  Epoch  2/25 | loss=0.0938 | val_MAP@3=0.5118
+  Epoch  3/25 | loss=0.0064 | val_MAP@3=0.5784
+  Epoch  4/25 | loss=0.0018 | val_MAP@3=0.5680
+  Epoch  5/25 | loss=0.0012 | val_MAP@3=0.5720
+  Epoch  6/25 | loss=0.0009 | val_MAP@3=0.5661
+  Epoch  7/25 | loss=0.0007 | val_MAP@3=0.5676
+  Epoch  8/25 | loss=0.0006 | val_MAP@3=0.5671
+  Epoch  9/25 | loss=0.0005 | val_MAP@3=0.5680
+  Epoch 10/25 | loss=0.0005 | val_MAP@3=0.5680
+  Epoch 11/25 | loss=0.0004 | val_MAP@3=0.5740
+  Epoch 12/25 | loss=0.0004 | val_MAP@3=0.5730
+  Epoch 13/25 | loss=0.0004 | val_MAP@3=0.5730
+  Epoch 14/25 | loss=0.0003 | val_MAP@3=0.5710
+  Epoch 15/25 | loss=0.0003 | val_MAP@3=0.5715
+  Epoch 16/25 | loss=0.0003 | val_MAP@3=0.5680
+  Epoch 17/25 | loss=0.0003 | val_MAP@3=0.5676
+  Epoch 18/25 | loss=0.0003 | val_MAP@3=0.5715
+  Epoch 19/25 | loss=0.0002 | val_MAP@3=0.5710
+  Epoch 20/25 | loss=0.0002 | val_MAP@3=0.5730
+  Epoch 21/25 | loss=0.0002 | val_MAP@3=0.5740
+  Epoch 22/25 | loss=0.0002 | val_MAP@3=0.5740
+  Epoch 23/25 | loss=0.0002 | val_MAP@3=0.5735
+  Epoch 24/25 | loss=0.0002 | val_MAP@3=0.5720
+wandb:
+wandb: Run history:
+wandb:         epoch ▁▁▂▂▂▂▃▃▃▄▄▄▅▅▅▅▆▆▆▇▇▇▇██
+wandb: m1_train_loss █▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:   m1_val_map3 █▁█▇▇▇▇▇▇▇█▇▇▇▇▇▇▇▇▇██▇▇▇
+wandb:
+wandb: Run summary:
+wandb:         epoch 25
+wandb: m1_train_loss 0.00022
+wandb:   m1_val_map3 0.57199
+wandb:
+wandb: You can sync this run to the cloud by running:
+wandb: wandb sync /kaggle/working/wandb/offline-run-20260727_101540-vt4zw465
+wandb: Find logs at: ./wandb/offline-run-20260727_101540-vt4zw465/logs
+  Epoch 25/25 | loss=0.0002 | val_MAP@3=0.5720
+Model 1 best val MAP@3: 0.5784
+M1 final val MAP@3: 0.5720
+Model 2 — DeBERTa-v3-small
+m2.float() + fp16. [SEP] format. Best val=0.5971 achieved in v87.
+
+print('=== Training Model 2: DeBERTa-v3-small ===')
+MODEL2 = 'microsoft/deberta-v3-small'
+tok_m2 = AutoTokenizer.from_pretrained(MODEL2)
+
+enc2     = tok_m2(train_txts_sep, padding='max_length', truncation=True, max_length=128)
+enc2_val = tok_m2(val_txts_sep,   padding='max_length', truncation=True, max_length=128)
+ds2      = Dataset.from_dict({'input_ids': enc2['input_ids'],
+                               'attention_mask': enc2['attention_mask'],
+                               'labels': train_lbls})
+ds2_val  = Dataset.from_dict({'input_ids': enc2_val['input_ids'],
+                               'attention_mask': enc2_val['attention_mask'],
+                               'labels': val_lbls})
+
+wandb.init(project=WANDB_PROJECT, name='deberta-v3-small-8ep',
+           tags=['pretrained', 'deberta'], config={
+               'model': MODEL2, 'max_length': 128, 'epochs': 8, 'batch_size': 32, 'lr': 2e-5,
+           })
+
+m2 = AutoModelForSequenceClassification.from_pretrained(
+    MODEL2, num_labels=5, ignore_mismatched_sizes=True)
+m2 = m2.float()   # Cast to fp32 — required for DeBERTa-v3 stability
+print(f'Parameters: {sum(p.numel() for p in m2.parameters()):,}')
+
+args2 = TrainingArguments(
+    output_dir='/tmp/m2',
+    per_device_train_batch_size=32,
+    per_device_eval_batch_size=64,
+    num_train_epochs=8,
+    learning_rate=2e-5,
+    warmup_ratio=0.1,
+    weight_decay=0.01,
+    lr_scheduler_type='cosine',
+    logging_steps=20,
+    eval_strategy='epoch',
+    save_strategy='no',
+    load_best_model_at_end=False,
+    report_to=WANDB_REPORT,
+    remove_unused_columns=False,
+    fp16=use_fp16,
+    dataloader_pin_memory=False,
+)
+Trainer(model=m2, args=args2, train_dataset=ds2, eval_dataset=ds2_val).train()
+wandb.finish()
+
+m2.eval().to(device)
+val_probs_m2 = get_probs_batched(m2, tok_m2, val_txts_sep)
+vm2          = map_at_3(val_probs_m2, val_lbls)
+print(f'DeBERTa-v3-small val MAP@3: {vm2:.4f}')
+
+test_probs_m2_orig = get_probs_batched(m2, tok_m2, test_txts_sep)
+test_probs_m2_tta  = get_probs_batched(m2, tok_m2, test_txts_sep,
+    aug_prefix='Answer the following multiple-choice question carefully: ')
+test_probs_m2 = (test_probs_m2_orig + test_probs_m2_tta) / 2
+
+del ds2, ds2_val, enc2, enc2_val
+gc.collect(); torch.cuda.empty_cache() if torch.cuda.is_available() else None
+=== Training Model 2: DeBERTa-v3-small ===
+wandb: Tracking run with wandb version 0.26.1
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /kaggle/working/wandb/offline-run-20260727_101616-m7g3qzln
+DebertaV2ForSequenceClassification LOAD REPORT from: microsoft/deberta-v3-small
+Key                                     | Status     |
+----------------------------------------+------------+-
+mask_predictions.classifier.weight      | UNEXPECTED |
+lm_predictions.lm_head.LayerNorm.bias   | UNEXPECTED |
+lm_predictions.lm_head.dense.weight     | UNEXPECTED |
+mask_predictions.LayerNorm.weight       | UNEXPECTED |
+lm_predictions.lm_head.dense.bias       | UNEXPECTED |
+mask_predictions.dense.weight           | UNEXPECTED |
+lm_predictions.lm_head.LayerNorm.weight | UNEXPECTED |
+mask_predictions.classifier.bias        | UNEXPECTED |
+mask_predictions.LayerNorm.bias         | UNEXPECTED |
+mask_predictions.dense.bias             | UNEXPECTED |
+lm_predictions.lm_head.bias             | UNEXPECTED |
+classifier.weight                       | MISSING    |
+classifier.bias                         | MISSING    |
+pooler.dense.weight                     | MISSING    |
+pooler.dense.bias                       | MISSING    |
+
+Notes:
+- UNEXPECTED	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+- MISSING	:those params were newly initialized because missing from the checkpoint. Consider training on your downstream task.
+warmup_ratio is deprecated and will be removed in v5.2. Use `warmup_steps` instead.
+Parameters: 141,898,757
+ [208/208 02:04, Epoch 8/8]
+Epoch	Training Loss	Validation Loss
+1	3.208718	3.203673
+2	3.122554	3.138052
+3	3.021557	3.108621
+4	2.219902	3.062438
+5	1.608994	3.033400
+6	1.108682	3.050567
+7	0.668560	3.062411
+8	0.619880	3.024298
+wandb: You can sync this run to the cloud by running:
+wandb: wandb sync /kaggle/working/wandb/offline-run-20260727_101616-m7g3qzln
+wandb: Find logs at: ./wandb/offline-run-20260727_101616-m7g3qzln/logs
+DeBERTa-v3-small val MAP@3: 0.5858
+Model 3 — RoBERTa-base
+m3.float() + fp16. [SEP] format. Exact 6203 config.
+
+print('=== Training Model 3: RoBERTa-base ===')
+MODEL3 = 'roberta-base'
+tok_m3 = AutoTokenizer.from_pretrained(MODEL3)
+
+enc3     = tok_m3(train_txts_sep, padding='max_length', truncation=True, max_length=128)
+enc3_val = tok_m3(val_txts_sep,   padding='max_length', truncation=True, max_length=128)
+ds3      = Dataset.from_dict({'input_ids': enc3['input_ids'],
+                               'attention_mask': enc3['attention_mask'],
+                               'labels': train_lbls})
+ds3_val  = Dataset.from_dict({'input_ids': enc3_val['input_ids'],
+                               'attention_mask': enc3_val['attention_mask'],
+                               'labels': val_lbls})
+
+wandb.init(project=WANDB_PROJECT, name='roberta-base-8ep',
+           tags=['pretrained', 'roberta'], config={
+               'model': MODEL3, 'max_length': 128, 'epochs': 8, 'batch_size': 32, 'lr': 2e-5,
+           })
+
+m3 = AutoModelForSequenceClassification.from_pretrained(
+    MODEL3, num_labels=5, ignore_mismatched_sizes=True)
+m3 = m3.float()
+print(f'Parameters: {sum(p.numel() for p in m3.parameters()):,}')
+
+args3 = TrainingArguments(
+    output_dir='/tmp/m3',
+    per_device_train_batch_size=32,
+    per_device_eval_batch_size=64,
+    num_train_epochs=8,
+    learning_rate=2e-5,
+    warmup_ratio=0.1,
+    weight_decay=0.01,
+    lr_scheduler_type='cosine',
+    logging_steps=20,
+    eval_strategy='epoch',
+    save_strategy='no',
+    load_best_model_at_end=False,
+    report_to=WANDB_REPORT,
+    remove_unused_columns=False,
+    fp16=use_fp16,
+    dataloader_pin_memory=False,
+)
+Trainer(model=m3, args=args3, train_dataset=ds3, eval_dataset=ds3_val).train()
+wandb.finish()
+
+m3.eval().to(device)
+val_probs_m3 = get_probs_batched(m3, tok_m3, val_txts_sep)
+vm3          = map_at_3(val_probs_m3, val_lbls)
+print(f'RoBERTa-base val MAP@3: {vm3:.4f}')
+
+test_probs_m3 = get_probs_batched(m3, tok_m3, test_txts_sep)
+del ds3, ds3_val, enc3, enc3_val
+gc.collect(); torch.cuda.empty_cache() if torch.cuda.is_available() else None
+=== Training Model 3: RoBERTa-base ===
+wandb: Tracking run with wandb version 0.26.1
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /kaggle/working/wandb/offline-run-20260727_101833-wiiclzwl
+RobertaForSequenceClassification LOAD REPORT from: roberta-base
+Key                             | Status     |
+--------------------------------+------------+-
+lm_head.dense.weight            | UNEXPECTED |
+roberta.embeddings.position_ids | UNEXPECTED |
+lm_head.layer_norm.weight       | UNEXPECTED |
+lm_head.layer_norm.bias         | UNEXPECTED |
+lm_head.bias                    | UNEXPECTED |
+lm_head.dense.bias              | UNEXPECTED |
+classifier.dense.weight         | MISSING    |
+classifier.out_proj.weight      | MISSING    |
+classifier.out_proj.bias        | MISSING    |
+classifier.dense.bias           | MISSING    |
+
+Notes:
+- UNEXPECTED	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+- MISSING	:those params were newly initialized because missing from the checkpoint. Consider training on your downstream task.
+warmup_ratio is deprecated and will be removed in v5.2. Use `warmup_steps` instead.
+Parameters: 124,649,477
+ [208/208 02:56, Epoch 8/8]
+Epoch	Training Loss	Validation Loss
+1	3.212116	3.210965
+2	3.079722	3.065118
+3	2.212165	3.644375
+4	0.206335	4.671186
+5	0.042836	5.727624
+6	0.017597	5.833958
+7	0.011262	6.000449
+8	0.010576	6.016968
+wandb: You can sync this run to the cloud by running:
+wandb: wandb sync /kaggle/working/wandb/offline-run-20260727_101833-wiiclzwl
+wandb: Find logs at: ./wandb/offline-run-20260727_101833-wiiclzwl/logs
+RoBERTa-base val MAP@3: 0.5419
+Model 4 — ALBERT-base-v2
+SentencePiece tokenizer. Question:\nA:\n... format (best for ALBERT). No token_type_ids. fp16, 8 epochs. Proven val=0.6188 in v81.
+
+print('=== Training Model 4: ALBERT-base-v2 ===')
+MODEL4 = 'albert-base-v2'
+tok_m4 = AutoTokenizer.from_pretrained(MODEL4)
+
+# ALBERT uses SentencePiece tokenizer — Question:\nA:\n format (proven val=0.6188)
+# Do NOT include token_type_ids in Dataset — causes KeyError crash
+enc4     = tok_m4(train_txts_alb, padding='max_length', truncation=True, max_length=128)
+enc4_val = tok_m4(val_txts_alb,   padding='max_length', truncation=True, max_length=128)
+ds4      = Dataset.from_dict({'input_ids': enc4['input_ids'],
+                               'attention_mask': enc4['attention_mask'],
+                               'labels': train_lbls})
+ds4_val  = Dataset.from_dict({'input_ids': enc4_val['input_ids'],
+                               'attention_mask': enc4_val['attention_mask'],
+                               'labels': val_lbls})
+
+wandb.init(project=WANDB_PROJECT, name='albert-base-v2-8ep',
+           tags=['pretrained', 'albert'], config={
+               'model': MODEL4, 'max_length': 128, 'epochs': 8, 'batch_size': 64, 'lr': 3e-5,
+           })
+
+m4 = AutoModelForSequenceClassification.from_pretrained(
+    MODEL4, num_labels=5, ignore_mismatched_sizes=True)
+print(f'Parameters: {sum(p.numel() for p in m4.parameters()):,}')
+
+args4 = TrainingArguments(
+    output_dir='/tmp/m4',
+    per_device_train_batch_size=64,
+    per_device_eval_batch_size=128,
+    num_train_epochs=8,
+    learning_rate=3e-5,
+    warmup_ratio=0.1,
+    weight_decay=0.01,
+    lr_scheduler_type='cosine',
+    logging_steps=10,
+    eval_strategy='epoch',
+    save_strategy='no',
+    load_best_model_at_end=False,
+    report_to=WANDB_REPORT,
+    remove_unused_columns=False,
+    fp16=use_fp16,
+    dataloader_pin_memory=False,
+)
+Trainer(model=m4, args=args4, train_dataset=ds4, eval_dataset=ds4_val).train()
+wandb.finish()
+
+m4.eval().to(device)
+val_probs_m4 = get_probs_batched(m4, tok_m4, val_txts_alb)
+vm4          = map_at_3(val_probs_m4, val_lbls)
+print(f'ALBERT-base-v2 val MAP@3: {vm4:.4f}')
+
+test_probs_m4     = get_probs_batched(m4, tok_m4, test_txts_alb)
+test_probs_m4_tta = get_probs_batched(m4, tok_m4, test_txts_alb,
+    aug_prefix='Answer the following multiple-choice question carefully: ')
+test_probs_m4 = (test_probs_m4 + test_probs_m4_tta) / 2
+
+del ds4, ds4_val, enc4, enc4_val
+gc.collect(); torch.cuda.empty_cache() if torch.cuda.is_available() else None
+=== Training Model 4: ALBERT-base-v2 ===
+wandb: Tracking run with wandb version 0.26.1
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /kaggle/working/wandb/offline-run-20260727_102140-mwak5kx3
+AlbertForSequenceClassification LOAD REPORT from: albert-base-v2
+Key                          | Status     |
+-----------------------------+------------+-
+predictions.LayerNorm.bias   | UNEXPECTED |
+predictions.dense.bias       | UNEXPECTED |
+predictions.LayerNorm.weight | UNEXPECTED |
+predictions.dense.weight     | UNEXPECTED |
+predictions.decoder.bias     | UNEXPECTED |
+predictions.bias             | UNEXPECTED |
+classifier.weight            | MISSING    |
+classifier.bias              | MISSING    |
+
+Notes:
+- UNEXPECTED	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+- MISSING	:those params were newly initialized because missing from the checkpoint. Consider training on your downstream task.
+warmup_ratio is deprecated and will be removed in v5.2. Use `warmup_steps` instead.
+Parameters: 11,687,429
+ [104/104 02:50, Epoch 8/8]
+Epoch	Training Loss	Validation Loss
+1	3.285063	3.245588
+2	2.976854	3.248747
+3	2.557397	3.144792
+4	1.468558	3.346800
+5	1.086465	3.544668
+6	0.816220	3.550482
+7	0.516504	3.565645
+8	0.488000	3.580015
+wandb: You can sync this run to the cloud by running:
+wandb: wandb sync /kaggle/working/wandb/offline-run-20260727_102140-mwak5kx3
+wandb: Find logs at: ./wandb/offline-run-20260727_102140-mwak5kx3/logs
+ALBERT-base-v2 val MAP@3: 0.4749
+Smart Ensemble + Submission
+Grid-search with scratch capped at ≤0.10. Higher weight to higher-scoring pretrained models.
+
+print('=== Smart Ensemble Weight Optimisation ===')
+print('Individual model val MAP@3:')
+vm1_val = map_at_3(val_probs_m1, val_lbls)
+print(f'  Scratch       : {vm1_val:.4f}  (weight capped at 0.10 — unreliable generalization)')
+print(f'  DeBERTa-small : {vm2:.4f}')
+print(f'  RoBERTa-base  : {vm3:.4f}')
+print(f'  ALBERT-base-v2: {vm4:.4f}')
+
+best_map = 0.0
+best_w   = np.array([0.05, 0.50, 0.25, 0.20])
+
+# Grid search: scratch capped at 0.10 (it overfits to val, poor generalization)
+for w1 in np.arange(0.00, 0.11, 0.02):           # scratch: 0.00 to 0.10
+    for w2 in np.arange(0.20, 0.75, 0.02):        # deberta
+        for w4 in np.arange(0.10, 0.60, 0.02):    # albert
+            w3 = round(1.0 - w1 - w2 - w4, 4)
+            if not (0.05 <= w3 <= 0.55):
+                continue
+            w  = np.array([w1, w2, w3, w4])
+            pe = w[0]*val_probs_m1 + w[1]*val_probs_m2 + w[2]*val_probs_m3 + w[3]*val_probs_m4
+            sc = map_at_3(pe, val_lbls)
+            if sc > best_map:
+                best_map = sc
+                best_w   = w.copy()
+
+print(f'\nBest val MAP@3 (ensemble) : {best_map:.4f}')
+print(f'Weights -> Scratch={best_w[0]:.2f} | DeBERTa={best_w[1]:.2f} | RoBERTa={best_w[2]:.2f} | ALBERT={best_w[3]:.2f}')
+
+# ── Generate submission ───────────────────────────────────────────────────────
+test_ens = (best_w[0]*test_probs_m1 + best_w[1]*test_probs_m2 +
+            best_w[2]*test_probs_m3 + best_w[3]*test_probs_m4)
+preds      = [top3_str(p) for p in test_ens]
+submission = pd.DataFrame({'ID': test['id'], 'Prediction': preds})
+submission.to_csv('submission.csv', index=False)
+print(f'\nsubmission.csv saved — {submission.shape[0]} rows')
+print(submission.head(10).to_string(index=False))
+
+print('\n' + '='*60)
+if best_map >= 0.75:
+    print(f'TARGET ACHIEVED: val MAP@3 = {best_map:.4f} >= 0.75')
+elif best_map >= 0.73:
+    print(f'CUTOFF MET: val MAP@3 = {best_map:.4f} >= 0.73')
+else:
+    print(f'val MAP@3 = {best_map:.4f}')
+print('='*60)
+
+from IPython.display import FileLink, display
+display(FileLink('submission.csv'))
+=== Smart Ensemble Weight Optimisation ===
+Individual model val MAP@3:
+  Scratch       : 0.5720  (weight capped at 0.10 — unreliable generalization)
+  DeBERTa-small : 0.5858
+  RoBERTa-base  : 0.5419
+  ALBERT-base-v2: 0.4749
+
+Best val MAP@3 (ensemble) : 0.6371
+Weights -> Scratch=0.02 | DeBERTa=0.64 | RoBERTa=0.24 | ALBERT=0.10
+
+submission.csv saved — 500 rows
+ ID Prediction
+  1      A E D
+  2      B C A
+  3      B C A
+  4      E C D
+  5      C E D
+  6      D C E
+  7      E D A
+  8      B C A
+  9      C D A
+ 10      B A C
+
+============================================================
+val MAP@3 = 0.6371
+============================================================
+submission.csv
+import subprocess, datetime
+
+msg = f'DL-24f1001839 auto-submit {datetime.datetime.now().strftime("%Y-%m-%d %H:%M")} val_MAP3={best_map:.4f}'
+res = subprocess.run(
+    ['kaggle', 'competitions', 'submit',
+     '-c', 'smart-mcq-solver-challenge',
+     '-f', 'submission.csv', '-m', msg],
+    capture_output=True, text=True,
+)
+print(res.stdout)
+if res.returncode != 0:
+    print('Submit manually at: https://www.kaggle.com/competitions/smart-mcq-solver-challenge/submit')
+    print('stderr:', res.stderr[:300])
+Warning: Looks like you're using an outdated `kaggle` version (installed: 2.0.2), please consider upgrading to the latest version (2.2.2)
+Successfully submitted to Smart MCQ Solver Challenge
+
+GAVE FINAL PUBLIC SCORE OF 0.71072. FAILED!!

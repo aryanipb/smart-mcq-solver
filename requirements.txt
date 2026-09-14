@@ -1,0 +1,10 @@
+torch>=2.0
+transformers>=4.40
+pandas
+numpy
+scikit-learn
+streamlit
+modal
+huggingface_hub
+wandb
+matplotlib

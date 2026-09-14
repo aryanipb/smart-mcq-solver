@@ -1,0 +1,133 @@
+PROJECT GUIDELINES:
+
+Criteria to pass this project course
+
+Model Requirements
+
+Present at least three unique models:
+One model built from scratch
+One pretrained model (USE MODELS FROM THE FAMILY OF BERT/RoBERTa)
+One additional model of choice
+Experiment Tracking
+
+All models must have valid Weights & Biases (WandB) runs
+At least three runs must be compared using common evaluation metrics such as accuracy and F1 score
+Development Practice
+
+A minimum score cutoff of <<0.73>> is required in the final Kaggle submission to qualify for the next level.
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+PROCESS TO FOLLOW:
+
+1. NLP Foundation & Semantic Similarity:
+Perform Text cleaning, tokenization, and handling missing data.
+Generate embeddings using baseline models like TF-IDF and Word2Vec.
+Compute cosine similarity between a 'prompt' and 'options' and understand its concepts.
+Calculate mAP@3 and understand the concept of mAP.
+
+2. Enter the Transformers:
+Introduction to the Hugging Face transformers and datasets libraries.
+Learn architecture of BERT/RoBERTa and the concept of attention mechanisms.
+Use pre-trained embedding models to generate context-aware embeddings.
+Zero-shot classification concepts with transformers and SLMs
+
+3. Context Augmentation with RAG Pipelines:
+The limitations of General LLMs. Learn the RAG pipeline in brief.
+Loading a simple pre-built vector database.
+Retrieving external context based on the question prompt.
+Feeding the retrieved context + prompt + choices into the model to improve reasoning.
+
+4. Formulating MCQ Task & Fine-Tuning:
+Data formatting for MCQ: Concatenating the question with options.
+Introduction to LoRA-finetuning, and its advantages over Full-finetuning.
+Setting up a training loop to fine-tune the model weights on the dataset.
+Managing GPU memory and batch sizes.
+Training efficiency strategies with Training arguments.
+
+5. Ensembling:
+Extracting and sorting logits to get the top 3 predictions (e.g., A C B).
+Ensemble techniques to stack predictions from multiple models.
+Other strategies to improve predictions.
+
+6. Final Submission & Presentation:
+Make final Kaggle submission.
+Create report & Present results and analysis (Macro F1, Error Analysis, Insights). Deploy model using Streamlit/Gradio.
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+COMPETITION INFORMATION:
+
+Smart MCQ Solver Challenge
+THIS IS A PRIVATE COMPETITION.
+
+Overview
+Welcome to the Smart MCQ Solver Challenge!
+
+In this competition, participants are required to build machine learning or AI based systems capable of solving complex multiple choice questions. Each question contains a prompt along with five possible answer options labeled A, B, C, D, and E. The objective is to predict the top three most likely correct answers in ranked order.
+
+The challenge focuses on evaluating a model’s ability to understand context, reason across options, and rank answers effectively. Participants are encouraged to experiment with a variety of approaches including transformer architectures, retrieval based pipelines, fine tuned language models, ensemble strategies, and efficient inference techniques.
+
+Submissions will be evaluated using Mean Average Precision at 3 (MAP@3), where models receive higher scores when the correct answer appears earlier in their ranked predictions.
+
+This competition is designed to encourage experimentation in natural language understanding, reasoning, and intelligent answer ranking while promoting efficient and reliable AI solutions.
+
+Goal: The goal of this competition is to build intelligent models that can accurately predict the top three most probable answers for challenging multiple choice questions. Participants are encouraged to develop efficient AI and machine learning solutions capable of strong reasoning and answer ranking.
+
+Description
+Multiple choice question answering remains an important benchmark for evaluating reasoning, language understanding, and answer ranking capabilities of modern AI systems. In many real world scenarios, intelligent models must not only identify the correct answer but also rank alternative answers effectively based on confidence and contextual understanding.
+
+In this competition, participants are provided with a collection of challenging MCQ style questions. Each question includes a prompt along with five possible answer choices labeled A, B, C, D, and E. The task is to predict the top three most probable correct answers for every question.
+
+The competition is designed to encourage experimentation with a variety of approaches including transformer based models, retrieval augmented systems, fine tuned language models, prompt engineering, ensemble methods, and efficient inference pipelines.
+
+Submissions are evaluated using Mean Average Precision at 3 (MAP@3), which rewards models that rank the correct answer higher in their predictions. Successful solutions should demonstrate strong reasoning ability, robust generalization, and effective answer ranking performance across diverse question patterns and difficulty levels.
+
+Evaluation
+Submissions are evaluated using Mean Average Precision at 3 (MAP@3).
+
+For each question, participants must predict up to three answer labels in ranked order from the available options: A, B, C, D, and E. Models receive higher scores when the correct answer appears earlier in the prediction list.
+
+Example:
+
+If the correct answer is:
+
+A
+Then the following predictions would receive:
+
+A B C   → highest score
+B A C   → Relatively lower score
+C D A   → lowest score
+Submission Format
+For every question ID in the test set, submissions must contain exactly three predicted labels separated by spaces.
+
+Example:
+
+ID,Prediction
+1,A B C
+2,C A D
+3,B D A
+
+Dataset Description
+The dataset for this competition consists of multiple choice questions designed to evaluate reasoning, comprehension, and answer ranking capabilities of AI systems. Each question contains a prompt along with five answer choices labeled A, B, C, D, and E.
+
+Participants are provided with a training dataset containing questions and their corresponding correct answers. The test dataset contains similar questions without the answer column, and participants must predict the top three most probable answers for each question. A GPU T4 X2 is provided in the environment which is to be only used.
+
+The dataset includes a variety of question styles and difficulty levels to encourage models that generalize effectively across different problem types.
+
+Files
+train.csv Contains the training questions along with the correct answer labels.
+
+test.csv Contains the test questions without answers. Participants must generate predictions for this file.
+
+sample_submission.csv Demonstrates the correct submission format for the competition.
+
+Columns
+id Unique identifier for each question.
+
+prompt The question or problem statement.
+
+A, B, C, D, E The five possible answer choices.
+
+answer The correct answer label in the training dataset. This column is not present in the test dataset.
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+** THE MOST IMPORTANT INSTRUCTION TO NOTE: THE COMPLETE CODE IN ALL CELLS OF THE COMPLETE NOTEBOOK SHOULD STRICTLY BE AS SIMPLE, AS MINIMAL, AS EASY, AS CLEAR, AS CLEAN, AS FOCUSED AS POSSIBLE. AVOID SCRIPTS AND FUNCTIONS FOR AUTOMATION OR TOO MUCH OF PROFESSIONALISM. KEEP IT RAW STRAIGHT AND SIMPLE. AVOID COMPLEX, DIFFICULT, COMPLICATED AND ADVANCED FUNCTIONS/CLASSES/LIBRARIES/TOOLS. USE SIMPLE ONES AND THOSE MENTIONED ABOVE. FOCUS MORE ON DESIGNING AND BUILDING THE BEST SCRATCH MODEL, SELECTING THE BEST PRE-TRAINED MODEL, SELECTING THE BEST THIRD MODEL, FINE-TUNING THE MODELS AND ON BEST, CORRECT, PERFECT DATA PROCESSING OF THE DATASET. STUDY, UNDERSTAND, ANALYSE THE DATASET. PERFORM EXPLORATORY DATA ANALYSIS OF THE DATASET. ACCORDINGLY PROCESS IT AND USE IT FOR TRAINING. STRICTLY AVOID CHEAT METHODS LIKE LOOKUP. HANDLE ALL THE PROBLEMS LIKE IMBALANCE, NOISE, ETC EFFICIENTLY. BE SUPER DAMN ULTRA ELITE PRO ADVANCED SMART, CLEVER, INTELLIGENT, WISE, GENIUS, DISCIPLINED, FOCUSED, SIMPLE, MINIMAL, CLEAR!! USE YOUR BEST EVER POSSIBLE INTELLIGENCE, KNOWLEDGE, EXPERIENCE, EXPERTISE, SKILLS OF ARTIFICIAL INTELLIGENCE, MACHINE LEARNING, DEEP LEARNING, TRANSFORMERS, RAG, LLM, MLOPS, PYTHON, PROGRAMMING, DATA ANALYSIS USED TILL NOW. GIVE YOUR BEST, 101%!! DO NOT COMPROMISE WITH ANYTHING FOR THIS!! KEEP THE NOTEBOOK SUPER STRUCTURED, ORGANISED, SYSTEMATIC, CLEAN, CLEAR, EASY TO READ AND UNDERSTAND. MENTION COMMENTS WHEREVER NECESSARY TO UNDERSTAND THE CODE. BE FINALLY REMEMBER TO KEEP THE CODE AND NOTEBOOK AND EVERYTHING SUPER SIMPLE, MINIMAL, CLEAR, CLEAN, FOCUSED!! **

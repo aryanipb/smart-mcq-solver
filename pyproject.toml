@@ -1,0 +1,62 @@
+[project]
+name = "smart-mcq-solver"
+version = "1.0.0"
+description = "Multi-Choice QA Cross-Encoder with RoBERTa & DeBERTa-v3, Group-Aware Split, and Streamlit Demo"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Aryan", email = "aryanipb@github.com" }
+]
+keywords = [
+  "multiple-choice-qa",
+  "cross-encoder",
+  "transformers",
+  "roberta",
+  "deberta",
+  "kaggle",
+  "nlp",
+  "deep-learning",
+  "pytorch",
+  "streamlit",
+]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "torch>=2.0",
+  "transformers>=4.40",
+  "pandas>=2.0",
+  "numpy>=1.24",
+  "scikit-learn>=1.3",
+  "streamlit>=1.30",
+]
+
+[project.optional-dependencies]
+cloud = [
+  "modal>=0.63.0",
+  "huggingface_hub>=0.20",
+]
+tracking = [
+  "wandb>=0.16.0",
+  "matplotlib>=3.7",
+]
+all = [
+  "smart-mcq-solver[cloud,tracking]",
+]
+
+[project.urls]
+Homepage = "https://github.com/aryanipb/smart-mcq-solver"
+Repository = "https://github.com/aryanipb/smart-mcq-solver"
+HuggingFace = "https://huggingface.co/aryanbabar170205/smart-mcq-roberta-base"
+Issues = "https://github.com/aryanipb/smart-mcq-solver/issues"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
